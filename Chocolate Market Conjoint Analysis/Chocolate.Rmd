@@ -1,0 +1,512 @@
+---
+title: "Marketing Assignment 2"
+author: "Bo Gu, Ke Deng, Lingyi Zhao"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: show
+    theme: united
+    df_print: paged
+    highlight: textmate
+    toc: true
+    toc_float: true
+editor_options:
+  chunk_output_type: inline
+always_allow_html: yes
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Loading in the data for the two datasets to understand what they contain.
+
+```{r}
+#install.packages("conjoint")
+library(conjoint)
+#data(journey)
+data(chocolate)
+```
+
+**Journey** is a dataset around travel. The variables used in the conjoint analysis will be purpose w/ 4 levels(cognitive, vacation, health, business), form w/ 2 levels (organized vs. own), season w/ 2 levels (summer vs. winter), and accomodation w/ 4 levels (1-2-3 star_hotel, 4-5 star_hotel, guesthouse, hostel). 
+
+**Chocolate** is a dataset around chocolate. The variables used in the conjoint analysis will be kind w/ 4 levels (milk,walnut, delicaties, dark), price w/ 3 levels(low, average, and high), packing w/ 2 levels (paperback vs. hardback),weight w/ 3 levels (light, middle, heavy) and calorie w/ 2 levels (little vs. much) 
+
+description of the data provided in data(chocolate):
+
+**cpref** = Vector of preferences (ratings) only - length 1392 (87 respondents x each respondent shown 16 profiles=1392).
+**cprefm** = Matrix of preferences (87 respondents and 16 profiles).
+**cprof** = Matrix of profiles (5 attributes and 16 full profiles).
+**clevn** = Character vector of names for the attributes’ levels.
+**csimp** = Matrix of simulation profiles.
+
+
+#### PART 1
+
+
+Use journey or chocolate data from package conjoint. Perform the following analyses: 
+
+- Partworth estimation for all individuals separately 
+- Partworth estimation by combining all individual responses into an aggregate 
+- Partworth estimation by using linear mixed models. In this case, you should treat each individual as a separate group for defining the random effects 
+- Partworth estimation of the mixed effects models by using MCMChregress
+
+```{r}
+set.seed(225)
+
+#Randomly selecting the holdout data for the test dataframe
+holdout <- vector()
+
+#Randomly assigning 1-16 to each of the survey respondents 16 profiles
+for (x in 1:87){
+  j <- sample(1:16)
+  holdout <- c(holdout,j)}
+
+# adding in a response id column to identify each respondent - each respondent has a preference rating for 16 profiles
+respid<- vector()
+for (x in 1:87){
+  j <- rep(x,16)
+  respid <- c(respid,j)}
+
+#establishing an inital dataframe
+cprof.full <- cprof
+
+#adding in cprof an additional 86 times, so cprof is repeated 87 times in cprof.full  
+
+for (x in 1:86){
+  cprof.full <- rbind(cprof.full,cprof)}
+
+#creating a dataframe that includes all respondents with their 16 profiles and preferences stacked on top of each other. 
+
+full.data <- data.frame(cbind(cpref, holdout, cprof.full,respid))
+
+#to randomly remove 2 profiles per respondent going to use the randomly generated holdout data and just take the profiles where the holdout is 3-16 for the train and the test is 1 and 2. 
+
+train.data <- full.data[full.data$holdout>2,]
+test.data <- full.data[full.data$holdout<3,]
+```
+
+```{r}
+#Model 1 - Individual Model
+coeff <- matrix(nrow=87, ncol=15,dimnames = list(c(1:87),c('Constant',t(clevn))))
+pred<- numeric()
+
+#looping through individual lm models and taking the coefficients into a separate dataframe
+
+cprof.factor=data.frame(apply(cprof,2,factor))
+
+des.mm= model.matrix(~kind + price + packing + weight + calorie, data = cprof.factor,
+              contrasts.arg=list(kind=contr.sum,price=contr.sum, 
+                                 packing=contr.sum,weight=contr.sum, calorie=contr.sum))
+
+des.mm.full <- des.mm
+
+for (x in 1:86){
+  des.mm.full <- rbind(des.mm.full,des.mm)
+  }
+
+des.df.full <- data.frame(des.mm.full)
+
+chocolate <- data.frame(cbind(cpref, holdout,des.df.full,respid))
+rownames(chocolate) <- 1:nrow(chocolate)
+
+cho.train.data <- chocolate[chocolate$holdout>2,]
+cho.test.data <- chocolate[chocolate$holdout<3,]
+
+for (i in 1:87){
+  model = lm(pref~kind1+kind2+kind3+price1+price2+packing1+weight1+weight2+calorie1, data = cho.train.data[cho.train.data$respid == i,])
+
+  yhat = predict(model,cho.test.data[cho.test.data$respid == i,])
+  pred = c(pred,yhat)
+  coeff[i,1:4]=model$coefficients[1:4]
+  coeff[i,5]=-sum(model$coefficients[2:4])
+  coeff[i,6:7]=model$coefficients[5:6]
+  coeff[i,8]=-sum(model$coefficients[5:6])
+  coeff[i,9]=model$coefficients[7]
+  coeff[i,10]=-model$coefficients[7]
+  coeff[i,11:12]=model$coefficients[8:9]
+  coeff[i,13]=-sum(model$coefficients[8:9])
+  coeff[i,14]=model$coefficients[10]
+  coeff[i,15]=-model$coefficients[10]
+  }
+
+# Write your code to run the individual lm models
+
+mse_part1 <- mean(test.data$pref-pred)^2
+mse_part1
+
+```
+
+
+```{r}
+#Model 2 - Aggregate Model
+#running full lm on all respondents and profiles as this is an aggregate model
+#all respondents have the same coefficients
+
+model_p2 = lm(pref~kind1+kind2+kind3+price1+price2+packing1+weight1+weight2+calorie1, data = cho.train.data)
+
+summary(model_p2)
+
+model_p2.parthworth <- model_p2$coefficients
+
+model_p2.parthworth['kind4']=-sum(model_p2.parthworth['kind1'],model_p2.parthworth['kind2'],model_p2.parthworth['kind3'])
+model_p2.parthworth['price3']=-sum(model_p2.parthworth['price1'],model_p2.parthworth['price2'])
+model_p2.parthworth['packing2']=-sum(model_p2.parthworth['packing1'])
+model_p2.parthworth['weight3']=-sum(model_p2.parthworth['weight1'],model_p2.parthworth['weight2'])
+model_p2.parthworth['calorie2']=-sum(model_p2.parthworth['calorie1'])
+
+model_p2_pred <- predict(model_p2,cho.test.data)
+
+
+mse_part2 <- mean(test.data$pref-model_p2_pred)^2
+mse_part2
+```
+
+
+
+
+```{r}
+#Model 3 - Mixed Models Approach
+require(lme4)
+
+model_p3 <- lmer(pref~kind1+kind2+kind3+price1+price2+packing1+weight1+weight2+calorie1 + 
+       (1+kind1+kind2+kind3+price1+price2+packing1+weight1+weight2+calorie1|respid),  
+     control=lmerControl(optCtrl = list(maxfun=100000)), data=cho.train.data)
+
+model_p3.parthworth <- matrix(nrow=87, ncol=15,dimnames = list(c(1:87),c('Constant',t(clevn))))
+
+model_p3.coef <- coef(model_p3)$respid
+
+for (i in 1:87){
+  model_p3.parthworth[i,1]=model_p3.coef$`(Intercept)`[i]
+  model_p3.parthworth[i,2]=model_p3.coef$kind1[i]
+  model_p3.parthworth[i,3]=model_p3.coef$kind2[i]
+  model_p3.parthworth[i,4]=model_p3.coef$kind3[i]
+  model_p3.parthworth[i,5]=-sum(model_p3.parthworth[i,2:4])
+  model_p3.parthworth[i,6]=model_p3.coef$price1[i]
+  model_p3.parthworth[i,7]=model_p3.coef$price2[i]
+  model_p3.parthworth[i,8]=-sum(model_p3.parthworth[i,6:7])
+  model_p3.parthworth[i,9]=model_p3.coef$packing1[i]
+  model_p3.parthworth[i,10]=-model_p3.parthworth[i,9]
+  model_p3.parthworth[i,11]=model_p3.coef$weight1[i]
+  model_p3.parthworth[i,12]=model_p3.coef$weight2[i]
+  model_p3.parthworth[i,13]=-sum(model_p3.parthworth[i,11:12])
+  model_p3.parthworth[i,14]=model_p3.coef$calorie1[i]
+  model_p3.parthworth[i,15]=-model_p3.parthworth[i,14]
+}
+
+model_p3_pred <- predict(model_p3, cho.test.data)
+
+mse_part3 <- mean(test.data$pref-model_p3_pred)^2
+mse_part3
+```
+
+
+
+```{r}
+#Model 4 - MCMC
+
+require(MCMCpack)
+
+model_p4 <- MCMChregress (fixed = pref~kind1+kind2+kind3+price1+price2+packing1+weight1+weight2+calorie1,
+                          random =  ~1+kind1+kind2+kind3+price1+price2+packing1+weight1+weight2+calorie1,
+                          group="respid",r=10, R=10*diag(10),data=cho.train.data)
+
+#finding the fixed effects by taking the mean of the 1,000 simulations
+fixed.intercept = mean(model_p4$mcmc[1:1000,1])
+fixed.kind1 = mean(model_p4$mcmc[1:1000,2])
+fixed.kind2 = mean(model_p4$mcmc[1:1000,3])
+fixed.kind3 = mean(model_p4$mcmc[1:1000,4])
+fixed.price1 = mean(model_p4$mcmc[1:1000,5])
+fixed.price2 = mean(model_p4$mcmc[1:1000,6])
+fixed.packing1 = mean(model_p4$mcmc[1:1000,7])
+fixed.weight1 = mean(model_p4$mcmc[1:1000,8])
+fixed.weight2 = mean(model_p4$mcmc[1:1000,9])
+fixed.calorie1 = mean(model_p4$mcmc[1:1000,10])
+
+model_p4_coeff=data.frame()
+
+for (i in 1:87)
+{
+  #creating the variable name for the random effects, which are unique to respondent
+  
+  v1= mean(model_p4$mcmc[,paste("b.(Intercept).",as.character(i),sep = '')])
+  v2= model_p4$mcmc[,paste("b.kind1.",as.character(i),sep = '')]
+  v3= model_p4$mcmc[,paste("b.kind2.",as.character(i),sep = '')]
+  v4= model_p4$mcmc[,paste("b.kind3.",as.character(i),sep = '')]
+  v5= model_p4$mcmc[,paste("b.price1.",as.character(i),sep = '')]
+  v6= model_p4$mcmc[,paste("b.price2.",as.character(i),sep = '')]
+  v7= model_p4$mcmc[,paste("b.packing1.",as.character(i),sep = '')]
+  v8= model_p4$mcmc[,paste("b.weight1.",as.character(i),sep = '')]
+  v9= model_p4$mcmc[,paste("b.weight2.",as.character(i),sep = '')]
+  v10= model_p4$mcmc[,paste("b.calorie1.",as.character(i),sep = '')]
+  
+  #taking the mean of the individual variables to find the random effects and adding the fixed effects
+  model_p4_coeff[i,1] = mean(v1)+ fixed.intercept
+  model_p4_coeff[i,2] = mean(v2)+ fixed.kind1
+  model_p4_coeff[i,3] = mean(v3)+ fixed.kind2
+  model_p4_coeff[i,4] = mean(v4)+ fixed.kind3
+  model_p4_coeff[i,5] = mean(v5)+ fixed.price1
+  model_p4_coeff[i,6] = mean(v6)+ fixed.price2
+  model_p4_coeff[i,7] = mean(v7)+ fixed.packing1
+  model_p4_coeff[i,8] = mean(v8)+ fixed.weight1
+  model_p4_coeff[i,9] = mean(v9)+ fixed.weight2
+  model_p4_coeff[i,10] = mean(v10)+ fixed.calorie1
+}
+
+model_p4.parthworth <- matrix(nrow=87, ncol=15,dimnames = list(c(1:87),c('Constant',t(clevn))))
+
+
+for (i in 1:87){
+  model_p4.parthworth[i,1]=model_p4_coeff$V1[i]
+  model_p4.parthworth[i,2]=model_p4_coeff$V2[i]
+  model_p4.parthworth[i,3]=model_p4_coeff$V3[i]
+  model_p4.parthworth[i,4]=model_p4_coeff$V4[i]
+  model_p4.parthworth[i,5]=-sum(model_p4.parthworth[i,2:4])
+  model_p4.parthworth[i,6]=model_p4_coeff$V5[i]
+  model_p4.parthworth[i,7]=model_p4_coeff$V6[i]
+  model_p4.parthworth[i,8]=-sum(model_p4.parthworth[i,6:7])
+  model_p4.parthworth[i,9]=model_p4_coeff$V7[i]
+  model_p4.parthworth[i,10]=-model_p4.parthworth[i,9]
+  model_p4.parthworth[i,11]=model_p4_coeff$V8[i]
+  model_p4.parthworth[i,12]=model_p4_coeff$V9[i]
+  model_p4.parthworth[i,13]=-sum(model_p4.parthworth[i,11:12])
+  model_p4.parthworth[i,14]=model_p4_coeff$V10[i]
+  model_p4.parthworth[i,15]=-model_p4.parthworth[i,14]
+}
+
+#generating the predictions by looping through and multiplying by the coefficients
+model_p4_coeff_test = rbind(model_p4_coeff[1,],model_p4_coeff[1,])
+
+for( i in 2:87){
+  model_p4_coeff_test = rbind(model_p4_coeff_test,model_p4_coeff[i,],model_p4_coeff[i,])
+}
+
+model_p4_pred <- numeric()
+
+# How will you score the test profiles in MCMC ?
+
+for (i in 1:174){
+  model_p4_pred[i] =  model_p4_coeff_test[i,1]+ 
+                      model_p4_coeff_test[i,2]*cho.test.data[i,4]+ 
+                      model_p4_coeff_test[i,3]*cho.test.data[i,5]+ 
+                      model_p4_coeff_test[i,4]*cho.test.data[i,6]+
+                      model_p4_coeff_test[i,5]*cho.test.data[i,7]+
+                      model_p4_coeff_test[i,6]*cho.test.data[i,8]+
+                      model_p4_coeff_test[i,7]*cho.test.data[i,9]+
+                      model_p4_coeff_test[i,8]*cho.test.data[i,10]+
+                      model_p4_coeff_test[i,9]*cho.test.data[i,11]+
+                      model_p4_coeff_test[i,10]*cho.test.data[i,12]
+}
+
+mse_part4 <- mean(test.data$pref-model_p4_pred)^2
+mse_part4
+
+```
+
+
+### Part 2
+
+#### Compare the performance of the 4 models
+
+```{r}
+data.frame(mse_part1,mse_part2,mse_part3,mse_part4)
+```
+
+
+Based on the four models, the model with the lowest mse is **Model 3 - Mixed Models Approach** 
+
+### Part 3
+
+Now we will cluster the part-worths of the **Model 3 - Mixed Models Approach**.
+
+```{r}
+# Choose the coefficient from the best model based on test data performance
+partworths <- coef(model_p3)$respid
+
+# Perform Clustering
+k.max <- 6
+data <- partworths
+wss <- sapply(1:k.max, 
+              function(k){kmeans(data, k, nstart=50,iter.max = 15 )$tot.withinss})
+wss
+plot(1:k.max, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares")
+```
+**Based on the elbow method, we choose k=3.** 
+
+```{r}
+kmm = kmeans(data,3,nstart = 50,iter.max = 15) 
+kmm
+```
+**After the k-means clustering, there are 26 respondants in cluster 1, 34 respondants in cluster 2, 27 respondants in cluster 3.**
+
+
+
+### Part 4
+
+Build a simulator that takes as input 4 or 5 input concepts, and produces market share estimates. Function caLogit can be used from package conjoint.
+
+```{r}
+##First, we build a dataframe of the profiles we want to use as inputs (calling this dataframe 'csimp0').
+
+csimp0 <- data.frame(kind=c(4,1,2,3,2), 
+                     price=c(1,3,2,1,3),
+                     packing=c(2,1,1,1,2),
+                     weight=c(2,1,3,1,3),
+                     calorie=c(1,2,1,1,2))
+
+##Here we can see what the dataframe looks like.
+print(csimp0)
+```
+
+
+```{r}
+#Then we run caLogit using 'csimp0' as our matrix of simulation profiles, along with the cpref and cprof given in the chocolate data. These are the market share estimates.
+
+caLogit(csimp0,cpref,cprof)
+```
+
+### Part 5
+
+**Cluster 1**
+
+```{r}
+
+cluster1 = kmm$centers[1,]
+cluster1['kind4']= -sum(cluster1['kind1'], cluster1['kind2'], cluster1['kind3'])
+cluster1['price3']=-sum(cluster1['price1'],cluster1['price2'])
+cluster1['packing2']=-sum(cluster1['packing1'])
+cluster1['weight3']=-sum(cluster1['weight1'],cluster1['weight2'])
+cluster1['calorie2']=-sum(cluster1['calorie1'])
+order(cluster1)
+
+```
+```{r}
+cluster1[order(-cluster1)]
+```
+
+
+```{r}
+cluster1.kind.importance = max(cluster1['kind1'],cluster1['kind2'],cluster1['kind3'],cluster1['kind4'])-min(cluster1['kind1'],cluster1['kind2'],cluster1['kind3'],cluster1['kind4'])
+cluster1.price.importance= max(cluster1['price1'],cluster1['price2'],cluster1['price3'])-min(cluster1['price1'],cluster1['price2'],cluster1['price3'])
+cluster1.packing.importance= max(cluster1['packing1'],cluster1['packing2'])-min(cluster1['packing1'],cluster1['packing2'])
+cluster1.weight.importance= max(cluster1['weight1'],cluster1['weight2'],cluster1['weight3'])-min(cluster1['weight1'],cluster1['weight2'],cluster1['weight3'])
+cluster1.calorie.importance= max(cluster1['calorie1'],cluster1['calorie2'])-min(cluster1['calorie1'],cluster1['calorie2'])
+
+cluster1.attribute.importance = cbind(cluster1.kind.importance, cluster1.packing.importance, cluster1.price.importance,cluster1.weight.importance,cluster1.calorie.importance)
+cluster1.attribute.importance
+```
+
+**Importance Ranking: kind > price > calorie > weight> packing **
+
+**Top 5 profile in cluster 1:**
+
+- Profile 1: dark, high price, much calorie, middle weight, hardback chocolate
+
+- Profile 2: dark, high price, much calorie, middle weight, paperback chocolate
+
+- Profile 3: dark, high price, much calorie, low weight, hardback chocolate
+
+- Profile 4: dark, high price, much calorie, low weight, paperback chocolate
+
+- Profile 5: dark, high price, much calorie, high weight, hardback chocolate
+
+
+
+
+**Cluster 2**
+
+```{r}
+kmm$centers[2,]
+```
+```{r}
+
+cluster2 = kmm$centers[2,]
+cluster2['kind4']= -sum(cluster2['kind1'], cluster2['kind2'], cluster2['kind3'])
+cluster2['price3']=-sum(cluster2['price1'],cluster2['price2'])
+cluster2['packing2']=-sum(cluster2['packing1'])
+cluster2['weight3']=-sum(cluster2['weight1'],cluster2['weight2'])
+cluster2['calorie2']=-sum(cluster2['calorie1'])
+order(cluster2)
+
+```
+```{r}
+cluster2[order(-cluster2)]
+```
+
+```{r}
+cluster2.kind.importance = max(cluster2['kind1'],cluster2['kind2'],cluster2['kind3'],cluster2['kind4'])-min(cluster2['kind1'],cluster2['kind2'],cluster2['kind3'],cluster2['kind4'])
+cluster2.price.importance= max(cluster2['price1'],cluster2['price2'],cluster2['price3'])-min(cluster2['price1'],cluster2['price2'],cluster2['price3'])
+cluster2.packing.importance= max(cluster2['packing1'],cluster2['packing2'])-min(cluster2['packing1'],cluster2['packing2'])
+cluster2.weight.importance= max(cluster2['weight1'],cluster2['weight2'],cluster2['weight3'])-min(cluster2['weight1'],cluster2['weight2'],cluster2['weight3'])
+cluster2.calorie.importance= max(cluster2['calorie1'],cluster2['calorie2'])-min(cluster2['calorie1'],cluster2['calorie2'])
+
+cluster2.attribute.importance = cbind(cluster2.kind.importance, cluster2.packing.importance, cluster2.price.importance,cluster2.weight.importance,cluster2.calorie.importance)
+cluster2.attribute.importance
+```
+
+**Importance Ranking: kind  > calorie > price > weight> packing **
+
+**Top 5 profile in cluster 2:**
+
+- Profile 1: dark, much calorie, high price, middle weight, hardback chocolate
+
+- Profile 2: dark, much calorie, high price,  middle weight, paperback chocolate
+
+- Profile 3: dark, much calorie, high price,  low weight, hardback chocolate
+
+- Profile 4: dark, much calorie, high price,  low weight, paperback chocolate
+
+- Profile 5: dark, much calorie, high price,  high weight, hardback chocolate
+
+
+
+**Cluster3**
+
+```{r}
+
+cluster3 = kmm$centers[3,]
+cluster3['kind4']= -sum(cluster3['kind1'], cluster3['kind2'], cluster3['kind3'])
+cluster3['price3']=-sum(cluster3['price1'],cluster3['price2'])
+cluster3['packing2']=-sum(cluster3['packing1'])
+cluster3['weight3']=-sum(cluster3['weight1'],cluster3['weight2'])
+cluster3['calorie2']=-sum(cluster3['calorie1'])
+order(cluster3)
+
+```
+```{r}
+cluster3[order(-cluster3)]
+```
+
+
+```{r}
+cluster3.kind.importance = max(cluster3['kind1'],cluster3['kind2'],cluster3['kind3'],cluster3['kind4'])-min(cluster3['kind1'],cluster3['kind2'],cluster3['kind3'],cluster3['kind4'])
+cluster3.price.importance= max(cluster3['price1'],cluster3['price2'],cluster3['price3'])-min(cluster3['price1'],cluster3['price2'],cluster3['price3'])
+cluster3.packing.importance= max(cluster3['packing1'],cluster3['packing2'])-min(cluster3['packing1'],cluster3['packing2'])
+cluster3.weight.importance= max(cluster3['weight1'],cluster3['weight2'],cluster3['weight3'])-min(cluster3['weight1'],cluster3['weight2'],cluster3['weight3'])
+cluster3.calorie.importance= max(cluster3['calorie1'],cluster3['calorie2'])-min(cluster3['calorie1'],cluster3['calorie2'])
+
+cluster3.attribute.importance = cbind(cluster3.kind.importance, cluster3.packing.importance, cluster3.price.importance,cluster3.weight.importance,cluster3.calorie.importance)
+cluster3.attribute.importance
+```
+
+**Importance Ranking: kind  > calorie > price > weight> packing **
+
+
+**Top 5 profile in cluster 3:**
+
+- Profile 1: delicaties, much calorie, high price, heavy weight, paperback chocolate
+
+- Profile 2: delicaties, much calorie, high price, heavy weight, haedback chocolate
+
+- Profile 3: delicaties, much calorie, high price, middle weight, paperback chocolate
+
+- Profile 4: delicaties, much calorie, high price, middle weight, hardback chocolate
+
+- Profile 5: delicaties, much calorie, high price, low weight, paperback chocolate
+
+
